@@ -1,0 +1,16 @@
+{
+	"folders": [
+		{
+			"path": "E:\\Work\\front_vue3"
+		},
+		{
+			"name": "Esp32Sound2",
+			"path": ".."
+		},
+		{
+			"name": "amperkaTest",
+			"path": "..\\..\\amperkaTest"
+		}
+	],
+	"settings": {}
+}
