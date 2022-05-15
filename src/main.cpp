@@ -26,11 +26,14 @@
  * display meta information instead of file name
  * support of other formats, not only mp3
  * external I2S DAC support
+ * bluetooth headphones support
+ * 
+ * IN_PROGRESS:
+ * 
  * WiFi server
  *  - update new tracks
  * 
  * POSSIBLE:
- * bluetooth headphones support
  * 
  * READY:
  * play/pause icon in top bar
@@ -60,50 +63,8 @@
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 
-AsyncWebServer server(80);
 
-// Replace with your network credentials
-const char* ssid = "EidenPearce";
-const char* password = "Didim2007";
-
-
-const char* ap_ssid = "EspPlayer";
-const char* ap_password = "EsPlay123";
-
-// void WifiConnect(){
-//   // Connect to Wi-Fi
-//   WiFi.begin(ssid, password);	
-//   while (WiFi.status() != WL_CONNECTED) {
-//     Serial.println("Connecting to WiFi..");
-//   }
-//   Serial.println("WiFi connected");
-// }
-
-bool serverRunning = false;
-
-void ConnectTaskCode(void * p){
-  WiFi.begin(ssid, password);	
-  
-  // WifiConnect();
-  while(true){
-                                  // 4 - errors
-                                  // 6 - disconnected
-    if(WiFi.status()==3){
-      if(!serverRunning){
-        Serial.println("Connected:"+WiFi.localIP().toString());
-        server.begin();
-        Serial.println("Server started");
-        serverRunning = true;
-      }
-    }
-    else{
-      
-      Serial.println("Connecting...");
-      Serial.println(WiFi.status());// 3-connected
-    }
-    vTaskDelay(1000);
-  }
-}
+String currentFile;
 
 #define SPI_SPEED SD_SCK_MHZ(1)
 #define SPDIF_OUT_PIN 27
@@ -126,7 +87,15 @@ TaskHandle_t PlayTask;
 String title;
 
 PlayerDisplay dis;
-String currentFile;
+ButtonsState buttons;
+PlayOrder po;
+bool ch;
+bool paused;
+
+
+uint32_t pos;
+uint32_t size;
+
 void MDCallback(void *cbData, const char *type, bool isUnicode, const char *string)
 {
   (void)cbData;
@@ -156,41 +125,6 @@ void MDCallback(void *cbData, const char *type, bool isUnicode, const char *stri
 }
 
 
-
-String utf8rus(String source)
-{
-  int i,k;
-  String target;
-  unsigned char n;
-  char m[2] = { '0', '\0' };
-  k = source.length(); i = 0;
-  while (i < k) {
-    n = source[i]; i++;
-    if (n >= 0xC0) {
-      switch (n) {
-        case 0xD0: {
-          n = source[i]; i++;
-          if (n == 0x81) { n = 0xA8; break; }
-          if (n >= 0x90 && n <= 0xBF) n = n + 0x30;
-          break;
-        }
-        case 0xD1: {
-          n = source[i]; i++;
-          if (n == 0x91) { n = 0xB8; break; }
-          if (n >= 0x80 && n <= 0x8F) n = n + 0x70;
-          break;
-        }
-      }
-    }
-    m[0] = n; target = target + String(m);
-  }
-return target;
-}
-
-ButtonsState buttons;
-PlayOrder po;
-bool ch;
-bool paused;
 
 void playFile(File file, bool addToList = false){
   if (String(file.name()).endsWith(".mp3")) { 
@@ -266,6 +200,181 @@ void playNextTrack(){
   }     
 }
 
+
+AsyncWebServer server(80);
+
+// Replace with your network credentials
+const char* ssid = "EidenPearce";
+const char* password = "Didim2007";
+
+
+const char* ap_ssid = "EspPlayer";
+const char* ap_password = "EsPlay123";
+const char index_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE HTML><html>
+<head>
+  <title>ESP Web Server</title>
+</head>
+<body>
+  <h2>ESP Web Server</h2>
+  %BUTTONPLACEHOLDER%
+</body>
+</html>
+)rawliteral";
+
+const char api_json[] PROGMEM = R"rawliteral(
+%data%"
+)rawliteral";
+
+const char state_json[] PROGMEM = R"rawliteral(
+{
+  "fileNname":"%fileNme%",
+  "progress":%progress%,
+  "paused":%paused%
+}
+)rawliteral";
+
+
+// Replaces placeholder with button section in your web page
+String processor(const String& var){
+  //Serial.println(var);
+  if(var == "BUTTONPLACEHOLDER"){
+    String buttons = "";
+    buttons += "<h4>currently playing:"+currentFile+"</h4>";
+    return buttons;
+  }
+  return String();
+}
+String nextProcessor(const String& var){
+  Serial.println("next track...");
+  playNextTrack();
+
+  if(var == "data"){
+    String buttons = "";
+    buttons += "<h4>currently playing:"+currentFile+"</h4>";
+    return buttons;
+  }
+  return String();
+}
+
+
+String stateProcessor(const String& var){
+  if(var == "fileName"){
+    return currentFile;
+  }
+  if(var=="progress"){
+    return  (String)((size==0)?1:(float)pos/size);
+  }
+  
+  if(var=="paused"){
+    return paused?"true":"false";
+  }
+  return String();
+}
+
+
+String resetProcessor(const String& var){
+  Serial.println("next track...");
+  playNextTrack();
+
+  if(var == "data"){
+    String buttons = "";
+    buttons += "{\"status\':\"true\"}";
+    return buttons;
+  }
+  return String();
+}
+
+void startServer(){
+  
+   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/html", index_html, processor);
+  });
+  
+  server.on("/next", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/html", api_json, nextProcessor);
+  });
+
+  
+  server.on("/state", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/json", state_json, stateProcessor);
+  });
+
+  // calls some bug when uncommented server
+  
+  // server.on("/reset", HTTP_GET, [](AsyncWebServerRequest *request){
+  //   request->send_P(200, "text/json", state_json, resetProcessor);
+  //   ESP.restart();
+  // });
+
+}
+
+// void WifiConnect(){
+//   // Connect to Wi-Fi
+//   WiFi.begin(ssid, password);	
+//   while (WiFi.status() != WL_CONNECTED) {
+//     Serial.println("Connecting to WiFi..");
+//   }
+//   Serial.println("WiFi connected");
+// }
+
+bool serverRunning = false;
+
+void ConnectTaskCode(void * p){
+  WiFi.begin(ssid, password);	
+  
+  // WifiConnect();
+  while(true){
+                                  // 4 - errors
+                                  // 6 - disconnected
+    if(WiFi.status()==3){
+      if(!serverRunning){
+        Serial.println("Connected:"+WiFi.localIP().toString());
+        server.begin();
+        Serial.println("Server started");
+        serverRunning = true;
+      }
+    }
+    else{
+      
+      Serial.println("Connecting...");
+      Serial.println(WiFi.status());// 3-connected
+    }
+    vTaskDelay(1000);
+  }
+}
+
+
+String utf8rus(String source)
+{
+  int i,k;
+  String target;
+  unsigned char n;
+  char m[2] = { '0', '\0' };
+  k = source.length(); i = 0;
+  while (i < k) {
+    n = source[i]; i++;
+    if (n >= 0xC0) {
+      switch (n) {
+        case 0xD0: {
+          n = source[i]; i++;
+          if (n == 0x81) { n = 0xA8; break; }
+          if (n >= 0x90 && n <= 0xBF) n = n + 0x30;
+          break;
+        }
+        case 0xD1: {
+          n = source[i]; i++;
+          if (n == 0x91) { n = 0xB8; break; }
+          if (n >= 0x80 && n <= 0x8F) n = n + 0x70;
+          break;
+        }
+      }
+    }
+    m[0] = n; target = target + String(m);
+  }
+return target;
+}
+
 void volumeUp(){
   ch=true;
   Serial.println("'up'");
@@ -313,43 +422,6 @@ void processCenterButton(){
   togglePause();
 }
 
-const char index_html[] PROGMEM = R"rawliteral(
-<!DOCTYPE HTML><html>
-<head>
-  <title>ESP Web Server</title>
-</head>
-<body>
-  <h2>ESP Web Server</h2>
-  %BUTTONPLACEHOLDER%
-</body>
-</html>
-)rawliteral";
-
-const char api_json[] PROGMEM = R"rawliteral(
-%data%"
-)rawliteral";
-
-// Replaces placeholder with button section in your web page
-String processor(const String& var){
-  //Serial.println(var);
-  if(var == "BUTTONPLACEHOLDER"){
-    String buttons = "";
-    buttons += "<h4>currently playing:"+currentFile+"</h4>";
-    return buttons;
-  }
-  return String();
-}
-String nextProcessor(const String& var){
-  Serial.println("next track...");
-  playNextTrack();
-
-  if(var == "data"){
-    String buttons = "";
-    buttons += "<h4>currently playing:"+currentFile+"</h4>";
-    return buttons;
-  }
-  return String();
-}
 
 
 void PlayTaskCode(void* p){
@@ -390,6 +462,8 @@ void PlayTaskCode(void* p){
   }
 }
 
+
+
 void setup() {
   pinMode(14, INPUT_PULLUP);
   pinMode(12, INPUT_PULLUP);
@@ -423,26 +497,16 @@ void setup() {
   DisplayHandle = xSemaphoreCreateMutex();
   xTaskCreate(PlayTaskCode, "PlayTask",39000,NULL,1,NULL);
   xTaskCreate(ConnectTaskCode, "ConnecvtTask",20000,NULL,3,NULL);
-  // void * pp;
-  // PlayTaskCode(pp);
-   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/html", index_html, processor);
-  });
-  
-  server.on("/next", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/html", api_json, nextProcessor);
-  });
-
+  startServer();
 }
-
 
 int tick=0;
 void loop() {
     ch=false;
     if(tick==10){
       // dis.showName(currentFile);
-      uint32_t pos = source->getPos();
-      uint32_t size = source->getSize();
+      pos = source->getPos();
+      size = source->getSize();
       float progress = (size==0)?1:(float)pos/size; 
       dis.showPlaybackStatus(!paused);
       dis.showVolume(gain);
