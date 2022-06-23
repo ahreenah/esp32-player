@@ -235,6 +235,12 @@ const char state_json[] PROGMEM = R"rawliteral(
 )rawliteral";
 
 
+const char file_list_json[] PROGMEM = R"rawliteral(
+{
+  "files":[%list%]
+}
+)rawliteral";
+
 // Replaces placeholder with button section in your web page
 String processor(const String& var){
   //Serial.println(var);
@@ -272,6 +278,28 @@ String stateProcessor(const String& var){
   return String();
 }
 
+String filesProcessor(const String& var){
+  
+  String res = "";
+  File root = SD.open("/");
+ 
+  File file = root.openNextFile();
+ 
+  while(file){
+ 
+      Serial.print("FILE: ");
+      res+=String("{\"name\":\"")+String(file.name())+"\",\"isDir\": "+(file.isDirectory()?"true":"false")+" },";
+      Serial.println(file.name());
+      
+ 
+      file = root.openNextFile();
+  }
+
+  if(var=="list"){
+    return res+String("null");
+  }
+  return String();
+}
 
 String resetProcessor(const String& var){
   Serial.println("next track...");
@@ -284,6 +312,46 @@ String resetProcessor(const String& var){
   }
   return String();
 }
+
+File writedFile;
+
+void handleUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+    String logmessage = "Client:" + request->client()->remoteIP().toString() + " " + request->url();
+    Serial.println(logmessage);
+
+    if (!index) {
+
+    // File myFile = SD.open("/test.txt",FILE_WRITE);
+    // Serial.print("Writing to test.txt...");
+    // myFile.println("testing 1, 2, 3.");
+    // close the file:
+    // myFile.close();
+
+      writedFile = SD.open("/"+String(filename),FILE_WRITE);
+      logmessage = "Upload Start: " + String(filename);
+      // open the file on first call and store the file handle in the request object
+      request->_tempFile = SPIFFS.open("/" + filename, "w");
+      Serial.println(logmessage);
+    }
+
+    if (len) {
+      // stream the incoming chunk to the opened file
+      // request->_tempFile.write(data, len);
+      writedFile.write(data, len);
+      logmessage = "Writing file: " + String(filename) + " index=" + String(index) + " len=" + String(len);
+      Serial.println(logmessage);
+      vTaskDelay(1);
+    }
+
+    if (final) {
+      writedFile.close();
+      logmessage = "Upload Complete: " + String(filename) + ",size: " + String(index + len);
+      // close the file handle as the upload is now done
+      request->_tempFile.close();
+      Serial.println(logmessage);
+      request->redirect("/");
+    }
+  }
 
 void startServer(){
   
@@ -299,6 +367,52 @@ void startServer(){
   server.on("/state", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send_P(200, "text/json", state_json, stateProcessor);
   });
+
+  
+  server.on("/files", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/json", file_list_json, filesProcessor);
+  });
+
+  server.on("/upload",HTTP_POST, [](AsyncWebServerRequest *request){
+      AsyncResponseStream *response = request->beginResponseStream("text/html");
+      // response->addHeader("Server","ESP Async Web Server");
+      response->printf("<!DOCTYPE html><html><head><title>Webpage at %s</title></head><body>", request->url().c_str());
+
+      response->print("<h2>Hello ");
+      response->print(request->client()->remoteIP());
+      response->print("</h2>");
+
+
+
+      response->print("<h3>Parameters</h3>");
+      response->print("<ul>");
+      int params = request->params();
+      Serial.println("Parsing started:");
+      for(int i=0;i<params;i++){
+        AsyncWebParameter* p = request->getParam(i);
+        if(p->isFile()){
+          Serial.println("   Parsing file");
+          response->printf("<li>FILE[%s]: %s, size: %u</li>", p->name().c_str(), p->value().c_str(), p->size());
+        } else if(p->isPost()){
+          Serial.println("   Parsing string");
+          response->printf("<li>POST[%s]: %s</li>", p->name().c_str(), p->value().c_str());
+        } 
+      }
+      response->print("</ul>");
+
+      response->print("</body></html>");
+      Serial.println("Parsing ended");
+      //send the response last
+      request->send(response);
+
+  });
+
+  
+
+
+  server.on("/upload-demo",HTTP_POST,  [](AsyncWebServerRequest *request) {
+        request->send(200);
+      }, handleUpload);
 
   // calls some bug when uncommented server
   
