@@ -63,8 +63,8 @@
 AsyncWebServer server(80);
 
 // Replace with your network credentials
-const char* ssid = "EidenPearce";
-const char* password = "Didim2007";
+const char* ssid = "243B47";
+const char* password = "hr9wuxwkk2";
 
 
 const char* ap_ssid = "EspPlayer";
@@ -82,6 +82,7 @@ const char* ap_password = "EsPlay123";
 bool serverRunning = false;
 
 void ConnectTaskCode(void * p){
+  Serial.println("Connect task started");
   WiFi.begin(ssid, password);	
   
   // WifiConnect();
@@ -193,22 +194,24 @@ bool ch;
 bool paused;
 
 void playFile(File file, bool addToList = false){
-  if (String(file.name()).endsWith(".mp3")) { 
+  String fileName = String(file.name());
+  fileName.toLowerCase();
+  if (fileName.endsWith(".mp3")) { 
     source->close();
-    if (source->open(file.name())) { 
+    if (source->open(file.path())) { 
       currentFile=file.name(); 
       if(addToList){
-        po.addToList(file.name());
+        po.addToList(file.path());
       }
       po.showOrderSerial();
 
-      Serial.printf_P(PSTR("Playing '%s' from SD card...\n"), file.name());
+      Serial.printf_P(PSTR("Playing '%s' from SD card...\n"), file.path());
   
   
   ////////////////
     
     // source = new AudioFileSourceSD(file.name());
-    source->open(file.name());
+    source->open(file.path());
     id3 = new AudioFileSourceID3(source);
     // id3->RegisterMetadataCB(MDCallback, (void*)"ID3TAG");
     // out = new AudioOutputI2SNoDAC();
@@ -220,6 +223,7 @@ void playFile(File file, bool addToList = false){
 
       id3->RegisterMetadataCB(MDCallback, (void*)"ID3");
       decoder->begin(id3, out);
+      Serial.println("Playback started");
     } else {
       Serial.printf_P(PSTR("Error opening '%s'\n"), file.name());
     }
@@ -244,19 +248,31 @@ void playNextTrack(){
   File file;
 
   String nextName = po.next();
+  Serial.println(nextName);
   if(nextName.length()==0){
-    while (!(String(file.name()).endsWith(".mp3"))){
+    Serial.println("in if");
+    String fileName = String(file.name());
+    fileName.toLowerCase();
+    while (!fileName.endsWith(".mp3")){
+      // Serial.print("next one"); 
+      fileName = String(file.name());
+      fileName.toLowerCase();
+      Serial.println(fileName);
       file.close();
       // delete &file;
       file = dir.openNextFile();  
     }
+    Serial.println("after loop");
   }
   else{
+    Serial.println("in else");
     file.close();
     // delete &file;
     file = SD.open(nextName.c_str());
 
   }
+  Serial.print("Found file:");
+  Serial.println(file.path());
 
   if (file) {  
     playFile(file,true);
@@ -353,6 +369,7 @@ String nextProcessor(const String& var){
 
 
 void PlayTaskCode(void* p){
+  Serial.println("Play task started");
   for (;;){
     buttons.checkInput();
     // gain
@@ -366,6 +383,7 @@ void PlayTaskCode(void* p){
       xSemaphoreGive(DisplayHandle);
     }
     if ((decoder) && (decoder->isRunning()) ) {
+      Serial.println('1');
       // идет воспроизведение, песня не окончилась
       
       if(buttons.prev.isShortReleased()){
@@ -383,6 +401,7 @@ void PlayTaskCode(void* p){
           if (!decoder->loop()) decoder->stop();
       }
     } else {
+      Serial.println('2');
       // песня окончилась
       playNextTrack();
     }
@@ -413,13 +432,22 @@ void setup() {
   id3->RegisterMetadataCB(MDCallback, (void*)"ID3");
   out = new AudioOutputI2S(0,1);//uncomment for internal
   decoder = new AudioGeneratorMP3();
-
-  #if defined(ESP8266)
-    SD.begin(SS, SPI_SPEED);
-  #else
-    SD.begin( );
-  #endif
+  if(
+    #if defined(ESP8266)
+      SD.begin(SS, SPI_SPEED)
+    #else
+      SD.begin( )
+    #endif
+  ){
+    Serial.println("sd init successful");
+  }else{
+    Serial.println("Sd init error");
+    while(1){
+      delay(1);
+    }
+  }
   dir = SD.open("/"); 
+  
   DisplayHandle = xSemaphoreCreateMutex();
   xTaskCreate(PlayTaskCode, "PlayTask",39000,NULL,1,NULL);
   xTaskCreate(ConnectTaskCode, "ConnecvtTask",20000,NULL,3,NULL);
